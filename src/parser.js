@@ -54,7 +54,7 @@ async function parseJSONLFile(filePath) {
     try {
       lines.push(JSON.parse(line));
     } catch {
-      // Skip malformed lines
+      // Skip malformed lines silently — user can't act on this
     }
   }
   return lines;
@@ -127,9 +127,14 @@ function extractSessionData(entries) {
 async function parseAllSessions() {
   const claudeDir = getClaudeDir();
   const projectsDir = path.join(claudeDir, 'projects');
+  const warnings = [];
+
+  if (!fs.existsSync(claudeDir)) {
+    return { sessions: [], dailyUsage: [], modelBreakdown: [], topPrompts: [], totals: {}, warnings: [{ type: 'missing-dir', message: 'Claude Code data directory not found at ' + claudeDir + '. Have you used Claude Code yet?' }] };
+  }
 
   if (!fs.existsSync(projectsDir)) {
-    return { sessions: [], dailyUsage: [], modelBreakdown: [], topPrompts: [], totals: {} };
+    return { sessions: [], dailyUsage: [], modelBreakdown: [], topPrompts: [], totals: {}, warnings: [{ type: 'no-projects', message: 'No project data found. Start a Claude Code conversation to generate usage data.' }] };
   }
 
   // Read history.jsonl for prompt display text
@@ -427,6 +432,7 @@ async function parseAllSessions() {
     topPrompts,
     totals: grandTotals,
     insights,
+    warnings,
   };
 }
 
@@ -641,6 +647,48 @@ function generateInsights(sessions, allPrompts, totals) {
       description: `Your cache hit rate is ${hitRate}% -- meaning ${hitRate}% of all input tokens were served from cache at 10x lower cost. Without caching, your estimated API-equivalent bill would be $${withoutCaching.toFixed(2)} instead of $${totals.totalCost.toFixed(2)}. Cache reads happen when Claude re-reads parts of the conversation that haven't changed since the last turn.`,
       action: 'Caching works best in longer conversations where context stays stable. Shorter sessions mean less cache reuse but also less context growth. The sweet spot is medium-length focused sessions on a single task.',
     });
+  }
+
+  // 12. Smart /clear suggestion based on inflection points
+  const qualifyingSessions = sessions.filter(s => s.queries.length >= 10);
+  if (qualifyingSessions.length >= 3) {
+    const inflections = [];
+    for (const s of qualifyingSessions) {
+      const queries = s.queries;
+      // Compute baseline: avg cost of first 5 turns
+      const baselineSlice = queries.slice(0, 5);
+      const baselineCost = baselineSlice.reduce((sum, q) => sum + q.cost, 0) / baselineSlice.length;
+      if (baselineCost <= 0) continue;
+
+      // Find inflection: rolling 3-turn avg exceeds 2x baseline
+      let inflectionTurn = null;
+      for (let i = 2; i < queries.length; i++) {
+        const windowCost = (queries[i].cost + queries[i - 1].cost + queries[i - 2].cost) / 3;
+        if (windowCost > baselineCost * 2) {
+          inflectionTurn = i - 1; // 0-indexed turn where it starts
+          break;
+        }
+      }
+      if (inflectionTurn !== null) {
+        const laterCost = queries.slice(inflectionTurn).reduce((s, q) => s + q.cost, 0) / (queries.length - inflectionTurn);
+        inflections.push({ turn: inflectionTurn, multiplier: laterCost / baselineCost });
+      }
+    }
+
+    if (inflections.length >= 2) {
+      // Median inflection turn
+      inflections.sort((a, b) => a.turn - b.turn);
+      const medianTurn = inflections[Math.floor(inflections.length / 2)].turn;
+      const avgMultiplier = (inflections.reduce((s, inf) => s + inf.multiplier, 0) / inflections.length).toFixed(1);
+
+      insights.push({
+        id: 'smart-clear',
+        type: 'warning',
+        title: `Use /clear after ~${medianTurn} turns to save tokens`,
+        description: `Across ${inflections.length} conversations, messages started costing ${avgMultiplier}x more after turn ${medianTurn}. This happens because Claude re-reads the entire conversation history each turn, and the cost compounds as context grows.`,
+        action: `Try using /clear after about ${medianTurn} turns. Before clearing, paste a brief summary of what you were working on so Claude has context for the next message. You can also use CONTEXT.md for handoff notes between conversations.`,
+      });
+    }
   }
 
   return insights;

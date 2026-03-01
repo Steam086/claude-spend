@@ -6,6 +6,13 @@ function createServer() {
   // Cache parsed data (reparse on demand via refresh endpoint)
   let cachedData = null;
 
+  function friendlyError(err) {
+    const msg = err.message || String(err);
+    if (err.code === 'ENOENT') return { error: 'Claude Code data directory not found. Have you used Claude Code yet?', code: 'ENOENT' };
+    if (err.code === 'EPERM' || err.code === 'EACCES') return { error: 'Permission denied reading Claude Code data. Try running with elevated permissions.', code: err.code };
+    return { error: msg };
+  }
+
   app.get('/api/data', async (req, res) => {
     try {
       if (!cachedData) {
@@ -13,7 +20,7 @@ function createServer() {
       }
       res.json(cachedData);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json(friendlyError(err));
     }
   });
 
@@ -23,7 +30,7 @@ function createServer() {
       cachedData = await require('./parser').parseAllSessions();
       res.json({ ok: true, sessions: cachedData.sessions.length });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json(friendlyError(err));
     }
   });
 
