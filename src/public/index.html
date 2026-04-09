@@ -128,6 +128,40 @@
   }
   .refresh-btn svg { width: 14px; height: 14px; }
 
+  .range-selector {
+    display: inline-flex; background: var(--white); border: 1px solid var(--border);
+    border-radius: 20px; padding: 3px; gap: 2px;
+  }
+  .range-selector button {
+    background: transparent; border: none; color: var(--text-secondary);
+    padding: 5px 12px; border-radius: 16px; cursor: pointer;
+    font-size: 12px; font-weight: 600; font-family: var(--font);
+    transition: all 0.15s;
+  }
+  .range-selector button:hover { color: var(--indigo); }
+  .range-selector button.active {
+    background: var(--indigo); color: #fff;
+    box-shadow: 0 2px 6px rgba(99,102,241,0.25);
+  }
+  .since-picker {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--white); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 12px;
+    font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    font-family: var(--font);
+  }
+  .since-picker label { cursor: pointer; }
+  .since-picker input[type="date"] {
+    border: none; outline: none; background: transparent;
+    font-family: var(--font); font-size: 12px; font-weight: 600;
+    color: var(--indigo); cursor: pointer; padding: 0;
+  }
+  .since-picker button {
+    background: transparent; border: none; color: var(--text-secondary);
+    cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px;
+  }
+  .since-picker button:hover { color: var(--indigo); }
+
   /* ---- STAT CARDS ---- */
   .stats-row {
     display: grid; grid-template-columns: repeat(4, 1fr);
@@ -700,6 +734,17 @@
       <h1>Claude Spend</h1>
     </div>
     <div class="header-right">
+      <div id="rangeSelector" class="range-selector">
+        <button data-range="7d" onclick="setRange('7d')">7D</button>
+        <button data-range="30d" onclick="setRange('30d')">30D</button>
+        <button data-range="90d" onclick="setRange('90d')">90D</button>
+        <button data-range="all" class="active" onclick="setRange('all')">All</button>
+      </div>
+      <div class="since-picker" title="Show data since a specific date">
+        <label for="sinceInput">Since:</label>
+        <input type="date" id="sinceInput" onchange="setSince(this.value)">
+        <button type="button" onclick="clearSince()" title="Clear">&times;</button>
+      </div>
       <span id="dateRange" class="date-range"></span>
       <button class="refresh-btn" onclick="generateShareCard()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
@@ -958,9 +1003,55 @@ function formatDate(d) {
   return `${months[parseInt(parts[1])-1]} ${parseInt(parts[2])}`;
 }
 
+let currentRange = 'all';
+let currentSince = '';
+
+function buildQuery() {
+  const params = new URLSearchParams();
+  if (currentSince) params.set('since', currentSince);
+  else params.set('range', currentRange);
+  return params.toString();
+}
+
+function showLoading() {
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+async function setRange(range) {
+  if (range === currentRange && !currentSince) return;
+  currentRange = range;
+  currentSince = '';
+  document.getElementById('sinceInput').value = '';
+  document.querySelectorAll('#rangeSelector button').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === range);
+  });
+  showLoading();
+  await fetchData();
+}
+
+async function setSince(value) {
+  if (!value) return;
+  currentSince = value;
+  document.querySelectorAll('#rangeSelector button').forEach(b => b.classList.remove('active'));
+  showLoading();
+  await fetchData();
+}
+
+async function clearSince() {
+  if (!currentSince) return;
+  currentSince = '';
+  document.getElementById('sinceInput').value = '';
+  document.querySelectorAll('#rangeSelector button').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === currentRange);
+  });
+  showLoading();
+  await fetchData();
+}
+
 async function fetchData() {
   try {
-    const res = await fetch('/api/data');
+    const res = await fetch('/api/data?' + buildQuery());
     const json = await res.json();
     if (!res.ok || json.error) {
       showError(json.error || `Server returned ${res.status}`);
@@ -1011,7 +1102,7 @@ async function refreshData() {
   document.getElementById('app').style.display = 'none';
   const errEl = document.getElementById('error-display');
   if (errEl) errEl.remove();
-  try { await fetch('/api/refresh'); } catch {}
+  try { await fetch('/api/refresh?' + buildQuery()); } catch {}
   await fetchData();
 }
 

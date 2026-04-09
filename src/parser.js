@@ -124,10 +124,12 @@ function extractSessionData(entries) {
   return queries;
 }
 
-async function parseAllSessions() {
+async function parseAllSessions(opts = {}) {
   const claudeDir = getClaudeDir();
   const projectsDir = path.join(claudeDir, 'projects');
   const warnings = [];
+  // `since` is an ISO timestamp string; sessions whose first entry is older are skipped
+  const sinceTs = opts.since || null;
 
   if (!fs.existsSync(claudeDir)) {
     return { sessions: [], dailyUsage: [], modelBreakdown: [], topPrompts: [], totals: {}, warnings: [{ type: 'missing-dir', message: 'Claude Code data directory not found at ' + claudeDir + '. Have you used Claude Code yet?' }] };
@@ -200,6 +202,9 @@ async function parseAllSessions() {
 
       const firstTimestamp = entries.find(e => e.timestamp)?.timestamp;
       const date = firstTimestamp ? firstTimestamp.split('T')[0] : 'unknown';
+
+      // Skip sessions that start before the requested `since` cutoff
+      if (sinceTs && firstTimestamp && firstTimestamp < sinceTs) continue;
 
       // Primary model
       const modelCounts = {};

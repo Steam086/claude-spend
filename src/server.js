@@ -3,8 +3,8 @@ const path = require('path');
 function createServer() {
   const app = express();
 
-  // Cache parsed data (reparse on demand via refresh endpoint)
-  let cachedData = null;
+  // Cache parsed data per range key (reparse on demand via refresh endpoint)
+  const cache = new Map();
 
   function friendlyError(err) {
     const msg = err.message || String(err);
@@ -13,12 +13,39 @@ function createServer() {
     return { error: msg };
   }
 
+  // Map a range token to an ISO timestamp cutoff (or null for "all")
+  function rangeToSince(range) {
+    const days = { '7d': 7, '30d': 30, '90d': 90 }[range];
+    if (!days) return null;
+    const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    return d.toISOString();
+  }
+
+  // Parse a custom `since` query value (YYYY-MM-DD or full ISO). Returns an ISO
+  // string cutoff, or null if the value is missing or invalid.
+  function parseSinceParam(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+
+  // Resolve a cache key + ISO cutoff from the request. A custom `since` wins
+  // over the preset `range` token.
+  function resolveSelection(req) {
+    const customSince = parseSinceParam(req.query.since);
+    if (customSince) return { key: 'since:' + customSince, since: customSince };
+    const range = ['7d', '30d', '90d', 'all'].includes(req.query.range) ? req.query.range : 'all';
+    return { key: 'range:' + range, since: rangeToSince(range) };
+  }
+
   app.get('/api/data', async (req, res) => {
     try {
-      if (!cachedData) {
-        cachedData = await require('./parser').parseAllSessions();
+      const { key, since } = resolveSelection(req);
+      if (!cache.has(key)) {
+        cache.set(key, await require('./parser').parseAllSessions({ since }));
       }
-      res.json(cachedData);
+      res.json(cache.get(key));
     } catch (err) {
       res.status(500).json(friendlyError(err));
     }
@@ -27,8 +54,11 @@ function createServer() {
   app.get('/api/refresh', async (req, res) => {
     try {
       delete require.cache[require.resolve('./parser')];
-      cachedData = await require('./parser').parseAllSessions();
-      res.json({ ok: true, sessions: cachedData.sessions.length });
+      cache.clear();
+      const { key, since } = resolveSelection(req);
+      const data = await require('./parser').parseAllSessions({ since });
+      cache.set(key, data);
+      res.json({ ok: true, sessions: data.sessions.length });
     } catch (err) {
       res.status(500).json(friendlyError(err));
     }

@@ -18,6 +18,11 @@ See where your Claude Code tokens go. One command, zero setup.
 <img width="1908" height="969" alt="Screenshot 2026-02-18 093647" src="https://github.com/user-attachments/assets/a9fde5e2-6e52-4bae-9b96-03655109aef6" />
 
 
+# Deploy
+```
+npm install
+npm start
+```
 
 ## Install
 
